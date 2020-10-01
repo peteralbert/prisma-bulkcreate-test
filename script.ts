@@ -10,7 +10,7 @@ const emptyDatabase = async () => {
 const range = (n: number): number[] =>
   Array.from({ length: n }, (value, key) => key);
 
-const createUserWithPosts = async (postCount: number) => {
+const createWithPrisma = async (postCount: number) => {
   return prisma.user.create({
     data: {
       email: "alice@prisma.io",
@@ -26,7 +26,7 @@ const createUserWithPosts = async (postCount: number) => {
   });
 };
 
-const createUserWithPosts2 = async (postCount: number) => {
+const createWithManualSQL = async (postCount: number) => {
   await prisma.$executeRaw`INSERT INTO User (email, name) VALUES (${"alice@prisma.io"}, ${"Alice"})`;
   const userId = (
     await prisma.user.findOne({
@@ -42,17 +42,18 @@ const createUserWithPosts2 = async (postCount: number) => {
 };
 async function main() {
   const postCount = 100000;
-  await emptyDatabase();
-
-  console.time("create user");
-  await createUserWithPosts(postCount);
-  console.timeEnd("create user");
 
   await emptyDatabase();
 
-  console.time("create user - manual");
-  await createUserWithPosts2(postCount);
-  console.timeEnd("create user - manual");
+  console.time(`Prisma: create user with ${postCount} posts`);
+  await createWithPrisma(postCount);
+  console.timeEnd(`Prisma: create user with ${postCount} posts`);
+
+  await emptyDatabase();
+
+  console.time(`executeRaw$: create user with ${postCount} posts`);
+  await createWithManualSQL(postCount);
+  console.timeEnd(`executeRaw$: create user with ${postCount} posts`);
   await emptyDatabase();
 }
 
