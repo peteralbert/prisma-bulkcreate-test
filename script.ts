@@ -28,10 +28,10 @@ const createUserWithPosts = async (postCount: number) => {
   });
 };
 async function main() {
-  await emptyDatabase();
   console.time("create user");
   const user = await createUserWithPosts(5000);
   console.timeEnd("create user");
+  await emptyDatabase();
 }
 
 main()
