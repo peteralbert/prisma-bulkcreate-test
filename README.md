@@ -1,169 +1,37 @@
-# Simple TypeScript Script Example
+This is an SSCEE for (this issue)[https://github.com/prisma/prisma/issues/3835]. It is based one [Prisma's example](https://github.com/prisma/prisma-examples/tree/latest/typescript/script)
 
-This example shows how to use [Prisma Client](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-client) in a **simple TypeScript script** to read and write data in a SQLite database. You can find the database file with some dummy data at [`./prisma/dev.db`](./prisma/dev.db).
+## Problem
 
-## How to use
+In our production schema, we have multiple nested entries (think of spreadsheet with cells, comments, etc.). When a new spreadsheet is created, for multiple reasons we need to initialize/create a lot of cells, comments, etc. As a consequence, `prisma.sheet.create()` leads to >1,000 (sometimes 10,000!) records that need to be created in different tables. This single statement takes **15-20seconds**!
 
-### 1. Download example & install dependencies
+## Suggested solution
 
-Clone this repository:
+Under the hood the Prisma Engine creates one `INSERT` statement for each record, i.e. a lot of statements must be executed - and as the records are related, this must be done sequentially as the parentIDs are required for the next statement. So if for instance 1 parent with 2 children and 3 child-childs respectively need to be created, 9 `INSERT`s must be executed:
 
-```
-git clone git@github.com:prisma/prisma-examples.git --depth=1
-```
+1. parent
+2. child1
+3. child-child 1.1
+4. child-child 1.2
+5. child-child 1.3
+6. child2
+7. child-child 2.1
+8. child-child 2.2
+9. child-child 2.3
 
-Install npm dependencies:
+Instead, running one `INSERT` with multiple `VALUES` will reduce the number of `INSERT`statements and improve performance a lot when dealing with multiple entries. In the above example, there would be 3 inserts:
 
-```
-cd prisma-examples/typescript/script
-npm install
-```
+1. parent
+2. child1, child2
+3. child-child 1.1, child-child 1.2, child-child 1.3, child-child 2.1, child-child 2.2, child-child 2.3
 
-Note that this also generates Prisma Client JS into `node_modules/@prisma/client` via a `postinstall` hook of the `@prisma/client` package from your `package.json`.
+## Demo
 
-### 2. Run the script
+I create a small [sample repo](https://github.com/peteralbert/prisma-bulkcreate-test) that reproduces this and measures the execution time for both approaches based on the number of records. While the Prisma approach in this specific example is faster for about 500 records, the manual approach is relatively faster the more records there are:
 
-Execute the script with this command: 
+- 10 records: Prisma: 21ms, Bulk: 87ms
+- 100 records: Prisma: 33ms, Bulk: 85ms
+- 1,000 records: Prisma: 132ms, Bulk: 87ms
+- 10,000 records: Prisma: 1,041ms, Bulk: 173ms
+- 100,000 records: Prisma: 10,313ms, Bulk: 893ms
 
-```
-npm run dev
-```
-
-## Evolving the app
-
-Evolving the application typically requires four subsequent steps:
-
-1. Migrating the database schema using SQL
-1. Update your Prisma schema by introspecting the database with `prisma introspect`
-1. Generating Prisma Client to match the new database schema with `prisma generate`
-1. Use the updated Prisma Client in your application code
-
-For the following example scenario, assume you want to add a "profile" feature to the app where users can create a profile and write a short bio about themselves.
-
-### 1. Change your database schema using SQL
-
-The first step would be to add a new table, e.g. called `Profile`, to the database. In SQLite, you can do so by running the following SQL statement:
-
-```sql
-CREATE TABLE "Profile" (
-  "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-  "bio" TEXT,
-  "user" INTEGER NOT NULL UNIQUE REFERENCES "User"(id) ON DELETE SET NULL
-);
-```
-
-To run the SQL statement against the database, you can use the `sqlite3` CLI in your terminal, e.g.:
-
-```bash
-sqlite3 dev.db \
-'CREATE TABLE "Profile" (
-  "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-  "bio" TEXT,
-  "user" INTEGER NOT NULL UNIQUE REFERENCES "User"(id) ON DELETE SET NULL
-);'
-```
-
-Note that we're adding a unique constraint to the foreign key on `user`, this means we're expressing a 1:1 relationship between `User` and `Profile`, i.e.: "one user has one profile".
-
-While your database now is already aware of the new table, you're not yet able to perform any operations against it using Prisma Client. The next two steps will update the Prisma Client API to include operations against the new `Profile` table.
-
-### 2. Introspect your database
-
-The Prisma schema is the foundation for the generated Prisma Client API. Therefore, you first need to make sure the new `Profile` table is represented in it as well. The easiest way to do so is by introspecting your database:
-
-```
-npx prisma introspect
-```
-
-> **Note**: You're using [npx](https://github.com/npm/npx) to run Prisma 2 CLI that's listed as a development dependency in [`package.json`](./package.json). Alternatively, you can install the CLI globally using `npm install -g @prisma/cli`. When using Yarn, you can run: `yarn prisma dev`.
-
-The `introspect` command updates your `schema.prisma` file. It now includes the `Profile` model and its 1:1 relation to `User`:
-
-```prisma
-model Post {
-  author    User?
-  content   String?
-  id        Int     @id
-  published Boolean @default(false)
-  title     String
-}
-
-model User {
-  email   String   @unique
-  id      Int      @id
-  name    String?
-  post    Post[]
-  profile Profile?
-}
-
-model Profile {
-  bio  String?
-  id   Int     @default(autoincrement()) @id
-  user Int     @unique
-  User User    @relation(fields: [user], references: [id])
-}
-```
-
-### 3. Generate Prisma Client
-
-With the updated Prisma schema, you can now also update the Prisma Client API with the following command:
-
-```
-npx prisma generate
-```
-
-This command updated the Prisma Client API in `node_modules/@prisma/client`.
-
-### 4. Use the updated Prisma Client in your application code
-
-You can now use your `PrismaClient` instance to perform operations against the new `Profile` table. Here are some examples:
-
-#### Create a new profile for an existing user
-
-```ts
-const profile = await prisma.profile.create({
-  data: {
-    bio: "Hello World",
-    user: {
-      connect: { email: "alice@prisma.io" },
-    },
-  },
-});
-```
-
-#### Create a new user with a new profile
-
-```ts
-const user = await prisma.user.create({
-  data: {
-    email: "john@prisma.io",
-    name: "John",
-    profile: {
-      create: {
-        bio: "Hello World",
-      },
-    },
-  },
-});
-```
-
-#### Update the profile of an existing user
-
-```ts
-const userWithUpdatedProfile = await prisma.user.update({
-  where: { email: "alice@prisma.io" },
-  data: {
-    profile: {
-      update: {
-        bio: "Hello Friends",
-      },
-    },
-  },
-});
-```
-
-## Next steps
-
-- Check out the [Prisma docs](https://www.prisma.io/docs)
-- Share your feedback in the [`prisma2`](https://prisma.slack.com/messages/CKQTGR6T0/) channel on the [Prisma Slack](https://slack.prisma.io/)
-- Create issues and ask questions on [GitHub](https://github.com/prisma/prisma/)
+The demo uses SQLLite, but we have the same issue with PostgreSQL in production.
